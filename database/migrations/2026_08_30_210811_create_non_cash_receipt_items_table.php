@@ -12,26 +12,25 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('non_cash_receipts', function (Blueprint $table) {
+        Schema::create('non_cash_receipt_items', function (Blueprint $table) {
             $table->id();
 
-            // اضافه شدن کلید خارجی کاربر (کارمندی که ثبت کرده) جهت رفع خطای user_id
-            $table->foreignId('user_id')->constrained('users')->cascadeOnUpdate()->restrictOnDelete();
+            // کلید خارجی متصل به جدول non_cash_receipts با حذف آبشاری
+            $table->foreignId('non_cash_receipt_id')
+                ->constrained('non_cash_receipts')
+                ->cascadeOnUpdate()
+                ->cascadeOnDelete();
 
-            $table->string('receipt_number', 50)->unique()->comment('شماره سریال رسید');
-            $table->string('donor_name', 150)->comment('نام و نام خانوادگی خیر');
-            $table->string('donor_mobile', 15)->comment('شماره موبایل خیر');
-            $table->string('national_code', 10)->nullable()->comment('کد ملی خیر');
-            $table->date('receipt_date')->comment('تاریخ ثبت رسید');
-            $table->unsignedBigInteger('total_estimated_value')->default(0)->comment('مجموع ارزش ریالی تخمینی (تومان/ریال)');
-            $table->text('notes')->nullable()->comment('توضیحات و یادداشت‌ها');
-            $table->boolean('sms_sent')->default(false)->comment('وضعیت ارسال پیامک تشکر');
+            $table->string('item_name', 150)->comment('نام کالا یا خدمت اهدایی');
+            $table->string('category', 100)->nullable()->comment('دسته‌بندی (پوشاک، ارزاق، جهیزیه، درمانی و ...)');
+            $table->decimal('quantity', 10, 2)->default(1)->comment('تعداد یا مقدار');
+            $table->string('unit', 50)->default('عدد')->comment('واحد سنجش (عدد، کیلوگرم، بسته، متر و ...)');
+            $table->unsignedBigInteger('estimated_unit_price')->default(0)->comment('ارزش واحد تخمینی');
+            $table->unsignedBigInteger('total_price')->default(0)->comment('ارزش کل قلم کالا');
+            $table->enum('condition', ['new', 'used_good', 'used_fair'])->default('new')->comment('وضعیت کالا: نو، در حد نو، مستعمل');
+            $table->string('description', 255)->nullable()->comment('توضیحات تکمیلی قلم کالا');
 
             $table->timestamps();
-
-            // ایندکس‌ها جهت بهینه‌سازی جستجو
-            $table->index('donor_mobile');
-            $table->index('receipt_date');
         });
     }
 
@@ -40,6 +39,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('non_cash_receipts');
+        Schema::dropIfExists('non_cash_receipt_items');
     }
 };

@@ -159,8 +159,15 @@ Route::middleware(['auth', 'role:employee'])
     Route::get('/reports/export-excel', [ReportController::class, 'exportExcel'])->name('reports.excel');
 
 
-    Route::resource('non-cash', NonCashReceiptController::class);
-
+    Route::prefix('non-cash-receipts')->name('non-cash-receipts.')->group(function () {
+        Route::get('/', [NonCashReceiptController::class, 'index'])->name('index');
+        Route::get('/create', [NonCashReceiptController::class, 'create'])->name('create');
+        Route::post('/store', [NonCashReceiptController::class, 'store'])->name('store');
+        Route::get('/{non_cash_receipt}', [NonCashReceiptController::class, 'show'])->name('show');
+        Route::get('/{non_cash_receipt}/edit', [NonCashReceiptController::class, 'edit'])->name('edit');
+        Route::put('/{non_cash_receipt}', [NonCashReceiptController::class, 'update'])->name('update');
+        Route::delete('/{non_cash_receipt}', [NonCashReceiptController::class, 'destroy'])->name('destroy');
+    });
 
 
     // روت چاپ/پیش‌نمایش قبض در صورت نیاز

@@ -221,12 +221,11 @@
             </a>
 
 
-            <a href="{{ route('employee.non-cash.index') }}"
-   class="sidebar-link {{ request()->routeIs('employee.non-cash-receipts.*') ? 'active' : '' }}">
-    <i class="bi bi-box-seam"></i>
-    <span>کمک‌های غیرنقدی</span>
-</a>
-
+          <a class="sidebar-link {{ request()->routeIs('employee.non-cash-receipts.*') ? 'active' : '' }}"
+       href="{{ route('employee.non-cash-receipts.index') }}">
+        <i class="bi bi-box-seam me-2"></i>
+        <span>کمک‌های غیرنقدی</span>
+    </a>
 
             <a href="{{ route('employee.sms_logs.index') }}" class="sidebar-link {{ request()->routeIs('employee.sms_logs.*') ? 'active' : '' }}">
                 <i class="bi bi-chat-square-text"></i>
@@ -299,11 +298,11 @@
             <span>صندوق</span>
         </a>
 
-        <a href="{{ route('employee.non-cash.index') }}"
-   class="sidebar-link {{ request()->routeIs('employee.non-cash-receipts.*') ? 'active' : '' }}">
-    <i class="bi bi-box-seam"></i>
-    <span>کمک‌های غیرنقدی</span>
-</a>
+       <a class="nav-link {{ request()->routeIs('employee.non-cash-receipts.*') ? 'active' : '' }}"
+       href="{{ route('employee.non-cash-receipts.index') }}">
+        <i class="bi bi-box-seam me-2"></i>
+        <span>کمک‌های غیرنقدی</span>
+    </a>
 
 
 
