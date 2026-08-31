@@ -3,35 +3,33 @@
 namespace App\Http\Controllers\Employee;
 
 use App\Http\Controllers\Controller;
-use App\Models\NonCashReceipt;
-use App\Models\NonCashReceiptItem;
-use App\Models\User;
-use App\Models\SmsLog;
-use App\Services\NegarSmsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
-use Hekmatinasser\Verta\Verta;
+use Morilog\Jalali\Jalalian;
+use Carbon\Carbon;
+use App\Services\NegarSmsService;
+use App\Models\SmsLog;
 use Exception;
 
 class NonCashReceiptController extends Controller
 {
     protected $smsService;
 
-    // تزریق سرویس پیامک به کنترلر
+    // تزریق سرویس پیامک
     public function __construct(NegarSmsService $smsService)
     {
         $this->smsService = $smsService;
     }
 
     /**
-     * نمایش لیست رسیدهای غیرنقدی
+     * نمایش لیست رسیدها
      */
     public function index()
     {
-        $receipts = NonCashReceipt::with(['user', 'employee'])
-            ->latest()
+        $receipts = DB::table('non_cash_receipts')
+            ->orderBy('id', 'desc')
             ->paginate(15);
 
         return view('employee.non_cash_receipts.index', compact('receipts'));
@@ -42,149 +40,192 @@ class NonCashReceiptController extends Controller
      */
     public function create()
     {
-        // تولید شماره رسید خودکار (فرمت دلخواه شما)
-        $autoReceiptNumber = 'NCR-' . time() . rand(10, 99);
-        $users = User::all(); // لیست نیکوکاران برای انتخاب در دراپ‌داون
+        $lastReceipt = DB::table('non_cash_receipts')->orderBy('id', 'desc')->first();
+        $suggestedReceiptNumber = $lastReceipt ? ((int)$lastReceipt->receipt_number + 1) : 1;
 
-        return view('employee.non_cash_receipts.create', compact('autoReceiptNumber', 'users'));
+        $currentDate = class_exists(Jalalian::class)
+            ? Jalalian::now()->format('Y/m/d')
+            : date('Y/m/d');
+
+        return view('employee.non_cash_receipts.create', compact('suggestedReceiptNumber', 'currentDate'));
     }
 
     /**
-     * ذخیره رسید و اقلام آن در دیتابیس
+     * ذخیره‌سازی رسید و اقلام آن
      */
     public function store(Request $request)
     {
-        // 1. اعتبارسنجی فیلدها (با رعایت دقیق نام‌گذاری‌ها)
-        $request->validate([
-            'user_id' => 'required|exists:users,id',
-            'receipt_number' => 'required|string|unique:non_cash_receipts,receipt_number',
-            'receipt_date' => 'required|string', // تاریخ شمسی
-            'description' => 'nullable|string',
-            'items' => 'required|array|min:1',
-            'items.*.item_name' => 'required|string|max:255',
-            'items.*.quantity' => 'required|numeric|min:0.01',
-            'items.*.unit_price' => 'required|numeric|min:0',
-            'items.*.description' => 'nullable|string',
+        // ۱. اعتبارسنجی فیلدهای سربرگ و لیست اقلام
+        $validated = $request->validate([
+            'receipt_number' => 'required|string|max:50|unique:non_cash_receipts,receipt_number',
+            'receipt_date'   => 'required|string',
+            'donor_name'     => 'required|string|max:150',
+            'donor_mobile'   => 'required|string|max:15',
+            'national_code'  => 'nullable|string|max:10',
+            'notes'          => 'nullable|string',
+
+            'items'                        => 'required|array|min:1',
+            'items.*.item_name'            => 'required|string|max:150',
+            'items.*.category'             => 'nullable|string|max:100',
+            'items.*.quantity'             => 'required|numeric|min:0.01',
+            'items.*.unit'                 => 'required|string|max:50',
+            'items.*.estimated_unit_price' => 'nullable|string',
+            'items.*.condition'            => 'required|in:new,used_good,used_fair',
+            'items.*.description'          => 'nullable|string|max:255',
         ], [
-            'items.required' => 'حداقل یک ردیف کالا باید وارد شود.',
-            'items.*.item_name.required' => 'نام کالا الزامی است.',
-            'items.*.quantity.required' => 'تعداد/مقدار الزامی است.',
-            'items.*.unit_price.required' => 'ارزش ریالی واحد الزامی است.',
+            'items.*.item_name.required' => 'وارد کردن نام کالا الزامی است.',
+            'items.*.quantity.required'  => 'مقدار کالا الزامی است.',
+            'items.*.unit.required'      => 'واحد کالا الزامی است.',
         ]);
 
+        $receiptDate = Carbon::now()->toDateString();
+        $jalaliDate = class_exists(Jalalian::class) ? Jalalian::now()->format('Y/m/d') : date('Y/m/d');
         try {
-            DB::beginTransaction();
-
-            // 2. تبدیل تاریخ شمسی به میلادی با Verta
-            // فرمت ورودی فرض شده: 1405/06/09
-            $gregorianDate = Verta::parseFormat('Y/m/d', $request->receipt_date)->datetime();
-
-            // 3. محاسبه ارزش کل رسید از روی اقلام
-            $totalValue = 0;
-            foreach ($request->items as $item) {
-                // اگر ویرگول جداکننده هزارگان از سمت کلاینت ارسال شده، آن را حذف می‌کنیم
-                $qty = (float) str_replace(',', '', $item['quantity']);
-                $price = (float) str_replace(',', '', $item['unit_price']);
-                $totalValue += ($qty * $price);
+            if (class_exists(Jalalian::class) && !empty($request->receipt_date)) {
+                $cleanDate = str_replace('-', '/', trim($request->receipt_date));
+                $receiptDate = Jalalian::fromFormat('Y/m/d', $cleanDate)->toCarbon()->toDateString();
+                $jalaliDate = $cleanDate;
             }
+        } catch (Exception $e) {
+            $receiptDate = Carbon::now()->toDateString();
+        }
 
-            // 4. ایجاد رکورد رسید (Master)
-            $receipt = NonCashReceipt::create([
-                'receipt_number' => $request->receipt_number,
-                'user_id' => $request->user_id,
-                'employee_id' => Auth::id(), // شناسه کارمند ثبت‌کننده
-                'receipt_date' => $gregorianDate,
-                'total_value' => $totalValue,
-                'description' => $request->description,
-                'sms_status' => 'pending', // وضعیت پیش‌فرض پیامک
-                'status' => 'active' // وضعیت تایید (بسته به منطق شما)
+        DB::beginTransaction();
+        try {
+            $userId = Auth::id() ?? 1;
+            $now = Carbon::now();
+
+            // الف) درج سربرگ
+            $receiptId = DB::table('non_cash_receipts')->insertGetId([
+                'user_id'               => $userId,
+                'receipt_number'        => $request->receipt_number,
+                'donor_name'            => $request->donor_name,
+                'donor_mobile'          => $request->donor_mobile,
+                'national_code'         => $request->national_code,
+                'receipt_date'          => $receiptDate,
+                'total_estimated_value' => 0,
+                'notes'                 => $request->notes,
+                'sms_sent'              => 0, // فعلاً ۰، در صورت ارسال موفق ۱ می‌شود
+                'created_at'            => $now,
+                'updated_at'            => $now,
             ]);
 
-            // 5. ثبت اقلام رسید (Details)
-            foreach ($request->items as $item) {
-                $qty = (float) str_replace(',', '', $item['quantity']);
-                $price = (float) str_replace(',', '', $item['unit_price']);
-                $totalPrice = $qty * $price;
+            // ب) پردازش اقلام
+            $grandTotal = 0;
+            $itemsData = [];
+            $itemNamesList = []; // برای استفاده در متن پیامک
 
-                NonCashReceiptItem::create([
-                    'non_cash_receipt_id' => $receipt->id,
-                    'item_name' => $item['item_name'],
-                    'quantity' => $qty,
-                    'unit_price' => $price,
-                    'total_price' => $totalPrice,
-                    'description' => $item['description'] ?? null,
-                ]);
+            foreach ($request->items as $item) {
+                $unitPrice = isset($item['estimated_unit_price']) ? (int)str_replace(',', '', $item['estimated_unit_price']) : 0;
+                $quantity = (float)$item['quantity'];
+                $totalPrice = (int)($unitPrice * $quantity);
+
+                $grandTotal += $totalPrice;
+                $itemNamesList[] = $item['item_name']; // جمع‌آوری نام کالاها
+
+                $itemsData[] = [
+                    'non_cash_receipt_id'  => $receiptId,
+                    'item_name'            => $item['item_name'],
+                    'category'             => $item['category'] ?? null,
+                    'quantity'             => $quantity,
+                    'unit'                 => $item['unit'] ?? 'عدد',
+                    'estimated_unit_price' => $unitPrice,
+                    'total_price'          => $totalPrice,
+                    'condition'            => $item['condition'] ?? 'new',
+                    'description'          => $item['description'] ?? null,
+                    'created_at'           => $now,
+                    'updated_at'           => $now,
+                ];
             }
 
-            // 6. ارسال پیامک تشکر پس از ذخیره موفق
-            $this->sendReceiptSms($receipt);
+            // درج اقلام
+            DB::table('non_cash_receipt_items')->insert($itemsData);
+
+            // ج) آپدیت جمع کل
+            DB::table('non_cash_receipts')
+                ->where('id', $receiptId)
+                ->update(['total_estimated_value' => $grandTotal]);
 
             DB::commit();
 
+            // د) ارسال پیامک رسید غیرنقدی
+            $smsStatus = 'ارسال نشد';
+            if (!empty($request->donor_mobile)) {
+                $smsResult = $this->sendNonCashReceiptSms(
+                    $request->donor_name,
+                    $request->donor_mobile,
+                    $jalaliDate,
+                    $itemNamesList,
+                    $receiptId,
+                    $userId
+                );
+
+                if ($smsResult) {
+                    // در صورت موفقیت، آپدیت فیلد sms_sent در دیتابیس
+                    DB::table('non_cash_receipts')->where('id', $receiptId)->update(['sms_sent' => 1]);
+                    $smsStatus = 'و پیامک ارسال شد';
+                } else {
+                    $smsStatus = 'اما ارسال پیامک با خطا مواجه شد';
+                }
+            }
+
             return redirect()->route('employee.non-cash-receipts.index')
-                ->with('success', 'رسید غیرنقدی با موفقیت ثبت شد و پیامک برای نیکوکار ارسال گردید.');
-        } catch (Exception $e) {
+                ->with('success', "رسید اهدای کالایی با شماره {$request->receipt_number} با موفقیت ثبت شد {$smsStatus}.");
+        } catch (Exception $ex) {
             DB::rollBack();
-            Log::error('خطا در ثبت رسید غیرنقدی: ' . $e->getMessage());
-            return redirect()->back()->withInput()->with('error', 'خطایی در ثبت اطلاعات رخ داد: ' . $e->getMessage());
+            return redirect()->back()
+                ->withInput()
+                ->with('error', 'متأسفانه در ثبت اطلاعات خطایی رخ داد: ' . $ex->getMessage());
         }
     }
 
     /**
-     * نمایش جزئیات یک رسید خاص
+     * متد خصوصی برای ارسال پیامک رسید غیرنقدی
      */
-    public function show(NonCashReceipt $nonCashReceipt)
-    {
-        $nonCashReceipt->load(['user', 'employee', 'items']);
-        return view('employee.non_cash_receipts.show', compact('nonCashReceipt'));
-    }
-
-    /**
-     * منطق ارسال پیامک و ثبت لاگ آن
-     */
-    private function sendReceiptSms(NonCashReceipt $receipt)
+    private function sendNonCashReceiptSms($donorName, $mobile, $date, $itemsList, $receiptId, $userId)
     {
         try {
-            $user = $receipt->user;
-
-            if (!$user || empty($user->mobile)) {
-                return; // اگر کاربر شماره موبایل نداشت، خارج می‌شویم
+            // ساخت رشته‌ای از نام کالاها (حداکثر ۲ مورد برای جلوگیری از طولانی شدن پیامک)
+            $itemsText = implode(' و ', array_slice($itemsList, 0, 2));
+            if (count($itemsList) > 2) {
+                $itemsText .= ' و ...';
             }
 
-            // متن پیامک (می‌توانید داینامیک کنید یا از پترن‌های سرویس نگار استفاده کنید)
-            $message = "نیکوکار گرامی {$user->name} عزیز\nرسید اهدای غیرنقدی شما به شماره {$receipt->receipt_number} در سیستم ثبت گردید.\nبا سپاس از همراهی شما.";
+            // متن پیامک برای کالاهای غیرنقدی
+            $message = "نیکوکار گرامی جناب/سرکار {$donorName}\n"
+                . "با سلام، بابت اهدای کالای «{$itemsText}» در تاریخ {$date} به موسسه خیریه دارالاحسان از شما سپاسگزاریم.\n"
+                . "کد رسید: {$receiptId}";
 
-            // فراخوانی متد ارسال پیامک از سرویس (متد دقیق بستگی به پیاده‌سازی سرویس شما دارد)
-            // $response = $this->smsService->sendSms($user->mobile, $message);
-            $response = true; // در اینجا فرض بر موفقیت ارسال است
+            // فراخوانی سرویس پیامک
+            $response = $this->smsService->sendOneToMany($message, [$mobile]);
 
-            if ($response) {
-                // به‌روزرسانی وضعیت پیامک در جدول رسید
-                $receipt->update(['sms_status' => 'sent']);
+            // ثبت لاگ پیامک موفق
+            SmsLog::create([
+                'user_id'       => $userId,
+                'donor_name'    => $donorName,
+                'donor_mobile'  => $mobile,
+                'message_text'  => $message,
+                'type'          => 'صدور فیش غیرنقدی',
+                'status'        => 'sent',
+                'error_message' => null,
+            ]);
 
-                // ثبت لاگ پیامک
-                SmsLog::create([
-                    'user_id' => $user->id,
-                    'mobile' => $user->mobile,
-                    'message' => $message,
-                    'status' => 'success',
-                    'sent_at' => now(),
-                ]);
-            } else {
-                $receipt->update(['sms_status' => 'failed']);
-
-                SmsLog::create([
-                    'user_id' => $user->id,
-                    'mobile' => $user->mobile,
-                    'message' => $message,
-                    'status' => 'failed',
-                ]);
-            }
+            return true;
         } catch (Exception $e) {
-            Log::error('خطا در ارسال پیامک رسید غیرنقدی: ' . $e->getMessage());
-            $receipt->update(['sms_status' => 'failed']);
+            Log::error("Non-Cash SMS Failed for Receipt ID {$receiptId}: " . $e->getMessage());
+
+            // ثبت لاگ پیامک ناموفق
+            SmsLog::create([
+                'user_id'       => $userId,
+                'donor_name'    => $donorName,
+                'donor_mobile'  => $mobile,
+                'message_text'  => $message ?? 'خطا در ساخت متن',
+                'type'          => 'صدور فیش غیرنقدی',
+                'status'        => 'failed',
+                'error_message' => $e->getMessage(),
+            ]);
+
+            return false;
         }
     }
-
-    // متدهای edit, update و destroy در صورت نیاز به ویرایش رسید در آینده می‌توانند در اینجا اضافه شوند
 }

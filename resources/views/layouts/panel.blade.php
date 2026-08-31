@@ -219,13 +219,17 @@
                 <i class="bi bi-box"></i>
                 <span>صندوق قلک </span>
             </a>
+ <a class="sidebar-link {{ request()->routeIs('employee.non-cash-receipts.*') ? 'active' : '' }}"
+       href="{{ route('employee.non-cash-receipts.index') }}">
+        <i class="bi bi-box-seam me-2"></i>
+        <span>رسیدهای غیرنقدی</span>
+    </a>
 
-
-          <a class="sidebar-link {{ request()->routeIs('employee.non-cash-receipts.*') ? 'active' : '' }}"
+          {{-- <a class="sidebar-link {{ request()->routeIs('employee.non-cash-receipts.*') ? 'active' : '' }}"
        href="{{ route('employee.non-cash-receipts.index') }}">
         <i class="bi bi-box-seam me-2"></i>
         <span>کمک‌های غیرنقدی</span>
-    </a>
+    </a> --}}
 
             <a href="{{ route('employee.sms_logs.index') }}" class="sidebar-link {{ request()->routeIs('employee.sms_logs.*') ? 'active' : '' }}">
                 <i class="bi bi-chat-square-text"></i>
@@ -329,5 +333,6 @@
             overlay.addEventListener('click', toggleMenu);
         }
     </script>
+     @stack('scripts')
 </body>
 </html>
