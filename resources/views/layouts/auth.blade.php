@@ -19,6 +19,7 @@
             flex-direction: column;
         }
 
+        
         .auth-card {
             background: white;
             border-radius: 20px;
